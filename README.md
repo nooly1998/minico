@@ -23,7 +23,8 @@ minico 是一个高性能、跨平台的 C 语言协程库，提供了用户态�
 ```shell
 bash git clone <repository-url> 
 cd minico 
-mkdir build && cd build cmake .. make
+mkdir build && cd build cmake .. 
+make
 
 ```
 
