@@ -24,7 +24,7 @@ static void ctx_switch(coroutine_ctx_t* from, coroutine_ctx_t* to)
 
         /* 保存 FS.base → from->tls */
         "movq  %%fs:0, %%rax       \n"
-        "movq  %%rax, 24(%rdi)     \n"
+        "movq  %%rax, 24(%%rdi)    \n"
 
         /* 保存 callee-saved xmm6-xmm15 */
         "sub   $160, %%rsp         \n"
@@ -48,15 +48,15 @@ static void ctx_switch(coroutine_ctx_t* from, coroutine_ctx_t* to)
         "push  %%r15               \n"
 
         /* from->fp / lr / sp */
-        "mov   %%rbp,  8(%rdi)     \n"
+        "mov   %%rbp,  8(%%rdi)    \n"
         "leaq  1f(%%rip), %%rax    \n"
-        "mov   %%rax, 16(%rdi)     \n"
-        "mov   %%rsp,  0(%rdi)     \n"
+        "mov   %%rax, 16(%%rdi)    \n"
+        "mov   %%rsp,  0(%%rdi)    \n"
 
         "2: /* ==============  load_to  ================= */\n"
 
         /* to 不为 NULL（调度器保证） */
-        "mov   0(%rsi), %%rsp      \n"
+        "mov   0(%%rsi), %%rsp     \n"
 
         /* restore 通用 callee-saved */
         "pop   %%r15               \n"
@@ -80,12 +80,12 @@ static void ctx_switch(coroutine_ctx_t* from, coroutine_ctx_t* to)
         "add   $160, %%rsp         \n"
 
         /* restore TLS */
-        "mov   24(%rsi), %%rax     \n"
+        "mov   24(%%rsi), %%rax    \n"
         "mov   %%rax, %%fs:0       \n"
 
         /* restore fp/lr */
-        "mov   8(%rsi),  %%rbp     \n"
-        "mov   16(%rsi), %%rax     \n"
+        "mov   8(%%rsi),  %%rbp    \n"
+        "mov   16(%%rsi), %%rax    \n"
         "jmp   *%%rax              \n"
 
         "1:\n"
