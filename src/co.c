@@ -19,7 +19,7 @@ static void ctx_switch(coroutine_ctx_t* from, coroutine_ctx_t* to)
 #ifdef __x86_64__
     __asm__ volatile(
         /* --------- 如果 from==NULL，直接跳到 load_to（主协程首次恢复） */
-        "test  %rdi, %rdi          \n"
+        "test  %%rdi, %%rdi          \n"
         "jz    2f                  \n"
 
         /* 保存 FS.base → from->tls */
@@ -90,9 +90,9 @@ static void ctx_switch(coroutine_ctx_t* from, coroutine_ctx_t* to)
 
         "1:\n"
         "ret\n"
-        :
-        :
-        : "memory","rax"
+        : /* no outputs */
+        : /* no inputs */
+        : "memory"
     );
 #elif __aarch64__
     __asm__ volatile(
