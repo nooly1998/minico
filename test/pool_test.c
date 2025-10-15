@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <pthread/pthread.h>
+#include <pthread.h>
 void sample_task(void* arg) {
     // 使用intptr_t确保指针和整数转换的可移植性
     intptr_t id = (intptr_t)arg;
