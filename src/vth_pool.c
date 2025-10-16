@@ -10,11 +10,10 @@
 #include <stdbool.h>
 #include <unistd.h>
 
-static void* vtp_worker(void* arg)
-{
-    vtp_t* p = arg;
+static void *vtp_worker(void *arg) {
+    vtp_t *p = arg;
 
-    coroutine_t* sched_co = malloc(sizeof(coroutine_t));
+    coroutine_t *sched_co = malloc(sizeof(coroutine_t));
     if (!sched_co) {
         fprintf(stderr, "Failed to allocate scheduler coroutine\n");
         return NULL;
@@ -37,7 +36,7 @@ static void* vtp_worker(void* arg)
             break; // 退出循环，在函数末尾统一清理
         }
 
-        vtask_t* vt = p->q_head;
+        vtask_t *vt = p->q_head;
         p->q_head = vt->next;
         if (p->q_head == NULL) p->q_tail = NULL;
         pthread_mutex_unlock(&p->q_mtx);
@@ -110,24 +109,39 @@ static void* vtp_worker(void* arg)
 
 void vtp_init(vtp_t* p, size_t n) {
     memset(p, 0, sizeof(*p));
-    p->nthreads = n;
     p->threads = calloc(n, sizeof(pthread_t));
     if (!p->threads) {
         fprintf(stderr, "Failed to allocate threads array\n");
         return;
     }
-    
+
     pthread_mutex_init(&p->q_mtx, NULL);
     pthread_cond_init(&p->q_cv, NULL);
 
+    size_t created = 0;
     for (size_t i = 0; i < n; ++i) {
-        if (pthread_create(&p->threads[i], NULL, vtp_worker, p) != 0) {
+        pthread_t tid;
+        if (pthread_create(&tid, NULL, vtp_worker, p) == 0) {
+            p->threads[created++] = tid;
+        } else {
             fprintf(stderr, "Failed to create worker thread %zu\n", i);
         }
     }
+    p->nthreads = created;
+
+    if (created == 0) {
+        fprintf(stderr, "Fatal: no worker threads created\n");
+        pthread_mutex_destroy(&p->q_mtx);
+        pthread_cond_destroy(&p->q_cv);
+        free(p->threads);
+        p->threads = NULL;
+    } else if (created < n) {
+        fprintf(stderr, "Warning: only %zu of %zu threads were created\n",
+                created, n);
+    }
 }
 
-void vtp_shutdown(vtp_t* p) {
+void vtp_shutdown(vtp_t *p) {
     // 设置停止标志并通知所有工作线程
     pthread_mutex_lock(&p->q_mtx);
     p->stop = true;
@@ -141,14 +155,22 @@ void vtp_shutdown(vtp_t* p) {
 
     // 清理队列中可能残留的任务
     pthread_mutex_lock(&p->q_mtx);
-    vtask_t* vt = p->q_head;
+    vtask_t *vt = p->q_head;
+    int orphaned_tasks = 0;
     while (vt) {
-        vtask_t* next = vt->next;
+        vtask_t *next = vt->next;
         if (vt->co) {
+            if (vt->co->state != DEAD) {
+                orphaned_tasks++;
+            }
             co_destroy(vt->co);
         }
         free(vt);
         vt = next;
+    }
+    if (orphaned_tasks > 0) {
+        fprintf(stderr, "Warning: %d tasks were terminated before completion\n",
+                orphaned_tasks);
     }
     p->q_head = p->q_tail = NULL;
     pthread_mutex_unlock(&p->q_mtx);
@@ -160,24 +182,17 @@ void vtp_shutdown(vtp_t* p) {
     pthread_cond_destroy(&p->q_cv);
 }
 
-void vtp_submit(vtp_t* p, void (*entry)(void*), void* arg, size_t stack_sz) {
+void vtp_submit(vtp_t *p, void (*entry)(void *), void *arg, size_t stack_sz) {
     if (!p || !entry) return;
-    
-    // 检查线程池是否已经停止
-    pthread_mutex_lock(&p->q_mtx);
-    if (p->stop) {
-        pthread_mutex_unlock(&p->q_mtx);
-        return;
-    }
-    pthread_mutex_unlock(&p->q_mtx);
-    
-    coroutine_t* co = co_create(entry, arg, stack_sz);
+
+    // 先创建资源
+    coroutine_t *co = co_create(entry, arg, stack_sz);
     if (!co) {
         fprintf(stderr, "Failed to create coroutine\n");
         return;
     }
 
-    vtask_t* vt = malloc(sizeof(*vt));
+    vtask_t *vt = malloc(sizeof(*vt));
     if (!vt) {
         co_destroy(co);
         fprintf(stderr, "Failed to allocate task\n");
@@ -186,15 +201,15 @@ void vtp_submit(vtp_t* p, void (*entry)(void*), void* arg, size_t stack_sz) {
     vt->co = co;
     vt->next = NULL;
 
+    // 一次性检查并入队
     pthread_mutex_lock(&p->q_mtx);
     if (p->stop) {
-        // 如果在加锁期间线程池被停止，清理资源
         pthread_mutex_unlock(&p->q_mtx);
         co_destroy(co);
         free(vt);
         return;
     }
-    
+
     if (p->q_tail) {
         p->q_tail->next = vt;
     } else {
