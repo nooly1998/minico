@@ -32,8 +32,7 @@ int main() {
     printf("All tasks submitted. The pool is running...\n");
 
     // 等待一段时间，让任务充分执行。
-    // 如果不加sleep，shutdown会立刻开始，但依然会正确等待所有任务完成。
-    // sleep(2);
+    sleep(2);
 
     printf("Shutting down pool...\n");
     vtp_shutdown(&pool);
