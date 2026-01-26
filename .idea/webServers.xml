@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="d4e40f09-f3ce-466c-a159-7dd3eeba0811" name="123">
+        <fileTransfer accessType="SFTP" host="123.127.8.117" port="22" sshConfigId="fb046237-30a9-4280-b3b1-d96efd392478" sshConfig="OMSRUN@123.127.8.117:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" isUseRsync="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

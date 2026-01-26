@@ -13,80 +13,12 @@
 #endif
 
 /* === 平台相关：ctx_switch() ========================================= */
+#ifdef __x86_64__
+/* x86_64 版本放在独立的 .S 文件里，避免编译器插入函数序言/尾声破坏栈 */
+extern void ctx_switch(coroutine_ctx_t *from, coroutine_ctx_t *to);
+#elif __aarch64__
 __attribute__((naked))
 static void ctx_switch(coroutine_ctx_t *from, coroutine_ctx_t *to) {
-#ifdef __x86_64__
-    __asm__ volatile(
-        /* --------- 无论 from 是否为 NULL，都要保存当前上下文 */
-
-        /* 保存 callee-saved xmm6-xmm15 */
-        "sub   $160, %%rsp         \n"
-        "movdqa %%xmm6,   0(%%rsp) \n"
-        "movdqa %%xmm7,  16(%%rsp) \n"
-        "movdqa %%xmm8,  32(%%rsp) \n"
-        "movdqa %%xmm9,  48(%%rsp) \n"
-        "movdqa %%xmm10, 64(%%rsp) \n"
-        "movdqa %%xmm11, 80(%%rsp) \n"
-        "movdqa %%xmm12, 96(%%rsp) \n"
-        "movdqa %%xmm13,112(%%rsp) \n"
-        "movdqa %%xmm14,128(%%rsp) \n"
-        "movdqa %%xmm15,144(%%rsp) \n"
-
-        /* 保存通用 callee-saved */
-        "push  %%rbp               \n"
-        "push  %%rbx               \n"
-        "push  %%r12               \n"
-        "push  %%r13               \n"
-        "push  %%r14               \n"
-        "push  %%r15               \n"
-        /* --------- 如果 from==NULL，直接跳到 load_to（主协程首次恢复） */
-        "test  %%rdi, %%rdi          \n"
-        "jz    2f                  \n"
-
-        /* from->fp / lr / sp */
-        "mov   %%rbp,  8(%%rdi)    \n"
-        "leaq  1f(%%rip), %%rax    \n"
-        "mov   %%rax, 16(%%rdi)    \n"
-        "mov   %%rsp,  0(%%rdi)    \n"
-
-        "2: /* ==============  load_to  ================= */\n"
-
-        /* to 不为 NULL（调度器保证） */
-        "mov   0(%%rsi), %%rsp     \n"
-
-        /* restore 通用 callee-saved */
-        "pop   %%r15               \n"
-        "pop   %%r14               \n"
-        "pop   %%r13               \n"
-        "pop   %%r12               \n"
-        "pop   %%rbx               \n"
-        "pop   %%rbp               \n"
-
-        /* restore xmm6-xmm15 */
-        "movdqa 144(%%rsp), %%xmm15\n"
-        "movdqa 128(%%rsp), %%xmm14\n"
-        "movdqa 112(%%rsp), %%xmm13\n"
-        "movdqa  96(%%rsp), %%xmm12\n"
-        "movdqa  80(%%rsp), %%xmm11\n"
-        "movdqa  64(%%rsp), %%xmm10\n"
-        "movdqa  48(%%rsp), %%xmm9 \n"
-        "movdqa  32(%%rsp), %%xmm8 \n"
-        "movdqa  16(%%rsp), %%xmm7 \n"
-        "movdqa   0(%%rsp), %%xmm6 \n"
-        "add   $160, %%rsp         \n"
-
-        /* restore fp/lr */
-        "mov   8(%%rsi),  %%rbp    \n"
-        "mov   16(%%rsi), %%rax    \n"
-        "jmp   *%%rax              \n"
-
-        "1:\n"
-        "ret\n"
-        : /* no outputs */
-        : /* no inputs */
-        : "memory"
-    );
-#elif __aarch64__
     __asm__ volatile(
         /* -------- 先保存浮点寄存器（v8–v15） ------------------- */
         "stp  q8,  q9,  [sp, #-32]!\n"
@@ -148,10 +80,8 @@ static void ctx_switch(coroutine_ctx_t *from, coroutine_ctx_t *to) {
         :
         : "memory"
     );
-#else
-# error "Unsupported arch"
-#endif
 }
+#endif
 
 /* === 线程局部变量记录当前协程指针 ============================== */
 __thread coroutine_t *co_current = NULL;
@@ -223,18 +153,25 @@ coroutine_t *co_create(void (*entry)(void *), void *arg, size_t stack_sz) {
     top = (uint8_t *) ALIGN_DOWN(top);
 
 #ifdef __x86_64__
+    top -= 8;
+    *(uint64_t *)top = 0; /* dummy return address */
+
     top -= 160;
     memset(top, 0, 160);
 
-    // 通用寄存器
-    top -= 8; *(uint64_t *) top = 0; // r15
-    top -= 8; *(uint64_t *) top = 0; // r14
-    top -= 8; *(uint64_t *) top = 0; // r13
-    top -= 8; *(uint64_t *) top = 0; // r12
-    top -= 8; *(uint64_t *) top = 0; // rbx
+    /*
+     * ctx_switch 恢复顺序是：
+     *   pop r15, r14, r13, r12, rbx, rbp
+     * 所以内存从 [rsp] 起必须是：r15,r14,r13,r12,rbx,rbp
+     * 由于我们是“top 向下增长”，需要反向写入：先写 rbp ... 最后写 r15
+     */
     top -= 8; *(uint64_t *) top = 0; // rbp
+    top -= 8; *(uint64_t *) top = 0; // rbx
+    top -= 8; *(uint64_t *) top = 0; // r12
+    top -= 8; *(uint64_t *) top = 0; // r13
+    top -= 8; *(uint64_t *) top = 0; // r14
+    top -= 8; *(uint64_t *) top = 0; // r15
 #elif __aarch64__
-    // ARM64 同样需要倒序模拟
 
     // 1. 返回地址
     top -= 8;
